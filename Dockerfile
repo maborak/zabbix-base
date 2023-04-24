@@ -1,4 +1,4 @@
-FROM ubuntu:21.10
+FROM ubuntu:22.10
 RUN apt-get update
 ARG DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
@@ -19,6 +19,7 @@ RUN apt-get -y install mariadb-client \
     libssh2-1-dev \
     libopenipmi-dev \
     libevent-dev \
+    libevent-pthreads-2.1-7 \
     libcurl4-openssl-dev \
     libpcre3-dev \
     unixodbc-dev \
@@ -29,9 +30,9 @@ RUN apt-get -y install mariadb-client \
     golang-go \
     libmysqlclient-dev
 
-RUN wget https://cdn.zabbix.com/zabbix/sources/development/6.0/zabbix-6.0.0alpha7.tar.gz && \
-    tar xvfz zabbix-6.0.0alpha7.tar.gz && \
-    cd zabbix-6.0.0alpha7 && \
+RUN wget https://cdn.zabbix.com/zabbix/sources/stable/6.4/zabbix-6.4.1.tar.gz && \
+    tar xvfz zabbix-6.4.1.tar.gz && \
+    cd zabbix-6.4.1 && \
     ./configure --enable-server --enable-agent --with-mysql --enable-ipv6 --with-net-snmp --with-libcurl --with-libxml2 --with-openipmi --with-ssh2 --with-unixodbc --enable-proxy --enable-java --enable-webservice --enable-ipv6 --with-ldap --enable-agent2 --with-openssl --with-libmodbus --prefix=/var/lib/zabbix && \
     make && \
     make install
