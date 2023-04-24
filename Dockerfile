@@ -36,3 +36,7 @@ RUN wget https://cdn.zabbix.com/zabbix/sources/stable/6.4/zabbix-6.4.1.tar.gz &&
     ./configure --enable-server --enable-agent --with-mysql --enable-ipv6 --with-net-snmp --with-libcurl --with-libxml2 --with-openipmi --with-ssh2 --with-unixodbc --enable-proxy --enable-java --enable-webservice --enable-ipv6 --with-ldap --enable-agent2 --with-openssl --with-libmodbus --prefix=/var/lib/zabbix && \
     make && \
     make install
+
+RUN mv /build/zabbix-*/ui /var/lib/zabbix_ui && \
+    mv /build/zabbix-*/database /var/lib/zabbix_db && \
+    rm -Rf /build/zabbix* /tmp/go/
