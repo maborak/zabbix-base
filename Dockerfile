@@ -1,13 +1,17 @@
-FROM ubuntu:noble
+# Stage 1: Compile and build Zabbix
+FROM ubuntu:noble AS builder 
 
-RUN apt-get update
-ARG DEBIAN_FRONTEND=noninteractive
-ARG ZABBIX_MAJOR_VERSION=7.0
-ARG ZABBIX_MINOR_VERSION=3
+# Set environment variables
+ARG DEBIAN_FRONTEND=noninteractive 
+ARG ZABBIX_MAJOR_VERSION=7.0 
+ARG ZABBIX_MINOR_VERSION=3 
 
-WORKDIR /build
+# Set working directory 
+WORKDIR /build 
 
-RUN apt-get -y install mariadb-client \
+# Update repositories and install needed dependencies for Zabbix in one layer & clean up
+RUN apt-get update && \
+    apt-get -y install mariadb-client \
     mariadb-common \
     software-properties-common \
     ca-certificates \
@@ -34,39 +38,48 @@ RUN apt-get -y install mariadb-client \
     libmodbus-dev \
     golang-go \
     libmysqlclient-dev && \
-    apt-get clean
-
-RUN wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
+    wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
     tar xvfz zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-    rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz
+    rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}
+WORKDIR /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION} 
 
-RUN ./configure     \
+# Configure, build Zabbix in one layer
+RUN ./configure \
     --enable-server \
-    --enable-agent  \
-    --with-mysql    \
-    --enable-ipv6   \
+    --enable-agent \
+    --with-mysql \
+    --enable-ipv6 \
     --with-net-snmp \
-    --with-libcurl  \
-    --with-libxml2  \
+    --with-libcurl \
+    --with-libxml2 \
     --with-openipmi \
-    --with-ssh2     \
+    --with-ssh2 \
     --with-unixodbc \
-    --enable-proxy  \
-    --enable-java   \
-    --enable-webservice  \
-    --enable-ipv6   \
-    --with-ldap     \
+    --enable-proxy \
+    --enable-java \
+    --enable-webservice \
+    --with-ldap \
     --enable-agent2 \
-    --with-openssl  \
+    --with-openssl \
     --with-libmodbus\
     --prefix=/var/lib/zabbix && \
     make -j$(nproc) && \
     make install
 
-WORKDIR /build
 
-RUN mv zabbix-*/ui /var/lib/zabbix_ui && \
-    mv zabbix-*/database /var/lib/zabbix_db && \
-    rm -Rf zabbix* /tmp/go/
+# Stage 2: Runtime Image
+FROM ubuntu:noble 
+
+# Set environment variables again
+ARG ZABBIX_MAJOR_VERSION=7.0 
+ARG ZABBIX_MINOR_VERSION=3 
+
+COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
+COPY --from=builder /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION} /var/lib/zabbix_tmp
+
+# Clean up residual files 
+RUN mv /var/lib/zabbix_tmp/ui /var/lib/zabbix_ui && \
+    mv /var/lib/zabbix_tmp/database /var/lib/zabbix_db && \
+    rm -Rf /var/lib/zabbix_tmp
