@@ -3,12 +3,12 @@ FROM ubuntu:noble AS builder
 
 # Set environment variables
 ARG DEBIAN_FRONTEND=noninteractive 
-ARG ZABBIX_MAJOR_VERSION=7.0 
-ARG ZABBIX_MINOR_VERSION=3 
-
+ARG ZABBIX_MAJOR_VERSION=7.0
+ARG ZABBIX_MINOR_VERSION=3
+ARG GOLANG_VERSION=1.23
 # Set working directory 
 WORKDIR /build 
-
+ENV PATH="${PATH}:/usr/lib/go-${GOLANG_VERSION}/bin"
 # Update repositories and install needed dependencies for Zabbix in one layer & clean up
 RUN apt-get update && \
     apt-get -y install mariadb-client \
@@ -32,12 +32,13 @@ RUN apt-get update && \
     libcurl4-openssl-dev \
     libpcre3-dev \
     unixodbc-dev \
-    openjdk-21-jdk \
+    #openjdk-21-jdk \
     libldap2-dev \
     libgnutls28-dev \
     libmodbus-dev \
-    golang-go \
     libmysqlclient-dev && \
+    add-apt-repository ppa:longsleep/golang-backports && \
+    apt-get update && apt-get -y install golang-${GOLANG_VERSION} && \
     wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
     tar xvfz zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
     rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
@@ -58,15 +59,16 @@ RUN ./configure \
     --with-ssh2 \
     --with-unixodbc \
     --enable-proxy \
-    --enable-java \
+    #--enable-java \
     --enable-webservice \
-    --with-ldap \
+    #--with-ldap \
     --enable-agent2 \
     --with-openssl \
     --with-libmodbus\
     --prefix=/var/lib/zabbix && \
     make -j$(nproc) && \
-    make install
+    make install && \
+    go version
 
 
 # Stage 2: Runtime Image
