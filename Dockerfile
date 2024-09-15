@@ -17,6 +17,7 @@ RUN apt-get update && \
     ca-certificates \
     libpcre2-8-0 \
     wget \
+    git \
     build-essential \
     automake \
     pkg-config \
@@ -39,15 +40,11 @@ RUN apt-get update && \
     libmysqlclient-dev && \
     add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && apt-get -y install golang-${GOLANG_VERSION} && \
-    wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-    tar xvfz zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-    rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION} 
-
-# Configure, build Zabbix in one layer
-RUN ./configure \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    git clone --verbose https://github.com/zabbix/zabbix.git && \
+    cd zabbix/ && \
+    sh bootstrap.sh && \
+    ./configure \
     --enable-server \
     --enable-agent \
     --with-mysql \
@@ -68,20 +65,14 @@ RUN ./configure \
     --prefix=/var/lib/zabbix && \
     make -j$(nproc) && \
     make install && \
-    go version
-
+    mv /build/zabbix/ui /var/lib/zabbix_ui && \
+    mv /build/zabbix/database /var/lib/zabbix_database && \
+    rm -Rf /build/zabbix
+    
 
 # Stage 2: Runtime Image
-FROM ubuntu:noble 
-
-# Set environment variables again
-ARG ZABBIX_MAJOR_VERSION=7.0 
-ARG ZABBIX_MINOR_VERSION=3 
+FROM ubuntu:noble
 
 COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
-COPY --from=builder /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION} /var/lib/zabbix_tmp
-
-# Clean up residual files 
-RUN mv /var/lib/zabbix_tmp/ui /var/lib/zabbix_ui && \
-    mv /var/lib/zabbix_tmp/database /var/lib/zabbix_db && \
-    rm -Rf /var/lib/zabbix_tmp
+COPY --from=builder /var/lib/zabbix_ui /var/lib/zabbix_ui
+COPY --from=builder /var/lib/zabbix_database /var/lib/zabbix_db
