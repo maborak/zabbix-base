@@ -1,3 +1,5 @@
+# To build:
+# docker build --build-arg ZABBIX_MAJOR_VERSION=6.0 --build-arg ZABBIX_MINOR_VERSION=33 -t maborak/zabbix-base:6.0 . --progress=plain
 # Stage 1: Compile and build Zabbix
 FROM ubuntu:noble AS builder 
 
@@ -65,6 +67,7 @@ RUN apt-get update && \
     --prefix=/var/lib/zabbix && \
     make -j$(nproc) && \
     make install && \
+    make dbschema && \
     mv /build/zabbix/ui /var/lib/zabbix_ui && \
     mv /build/zabbix/database /var/lib/zabbix_database && \
     rm -Rf /build/zabbix
