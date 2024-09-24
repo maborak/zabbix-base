@@ -1,4 +1,6 @@
 # Stage 1: Compile and build Zabbix
+# Build command:
+#    docker build --build-arg ZABBIX_MAJOR_VERSION=6.0 --build-arg ZABBIX_MINOR_VERSION=33 -t maborak/zabbix-base:6.0 . --progress=plain
 FROM ubuntu:noble AS builder 
 
 # Set environment variables
