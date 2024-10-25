@@ -7,7 +7,7 @@ FROM ubuntu:noble AS builder
 ARG DEBIAN_FRONTEND=noninteractive 
 ARG ZABBIX_MAJOR_VERSION=7.0
 ARG ZABBIX_MINOR_VERSION=3
-ARG GOLANG_VERSION=1.23
+ARG GOLANG_VERSION=1.22
 # Set working directory 
 WORKDIR /build 
 ENV PATH="${PATH}:/usr/lib/go-${GOLANG_VERSION}/bin"
@@ -41,7 +41,8 @@ RUN apt-get update && \
     libmysqlclient-dev && \
     add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && apt-get -y install golang-${GOLANG_VERSION} && \
-    wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
+    #wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
+    wget https://cdn.zabbix.com/zabbix/sources/oldstable/6.2/zabbix-6.2.9.tar.gz && \
     tar xvfz zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
     rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
