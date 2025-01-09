@@ -78,8 +78,8 @@
         --enable-agent2 \
         --with-openssl \
         --with-libmodbus \
-        --prefix=/var/lib/zabbix && \
-        make -j"$(nproc)" && \
+        --prefix=/var/lib/zabbix
+    RUN LDFLAGS="-lm" make -j"$(nproc)" && \
         make install && \
         go version
     
