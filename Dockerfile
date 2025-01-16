@@ -96,7 +96,7 @@
         apt-get -y install \
           mariadb-client \
           mariadb-common \
-          libmysqlclient-dev && \
+          libmysqlclient* && \
         apt-get clean && rm -rf /var/lib/apt/lists/*
     
     # Copy installed Zabbix from builder
