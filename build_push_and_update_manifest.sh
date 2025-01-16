@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 if [[ -z "$1" || "$1" != "--arch=arm64" && "$1" != "--arch=amd64" ]]; then
     echo "Usage: $0 --arch=<arch>"
@@ -11,7 +12,7 @@ ARCH=${1#--arch=}
 IMAGE_NAME="maborak/zabbix-base"
 
 # Create and use a new builder instance
-docker buildx create --use
+docker buildx create --use 
 
 # Build and push the specified architecture using buildx
 echo "Building and pushing ${IMAGE_NAME}:${ARCH} with buildx..."

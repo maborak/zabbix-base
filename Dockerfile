@@ -1,68 +1,46 @@
+# Define Zabbix version globally
+ARG ZABBIX_VERSION=7.2.2
+
 # --------------------------------
 # Stage 1: Build Zabbix
 # --------------------------------
-    FROM ubuntu:noble AS builder
+FROM ubuntu:noble AS builder
 
-    ARG DEBIAN_FRONTEND=noninteractive
-    ARG ZABBIX_MAJOR_VERSION=7.2
-    ARG ZABBIX_MINOR_VERSION=2
-    ARG GOLANG_VERSION=1.23
-    
-    # Working directory
-    WORKDIR /build
-    
-    ENV PATH="${PATH}:/usr/lib/go-${GOLANG_VERSION}/bin"
-    
-    # ----- Step 1: Update & Dist-Upgrade (Optional but often helps)
-    RUN apt-get update && \
-        apt-get dist-upgrade -y && \
-        apt-get clean && rm -rf /var/lib/apt/lists/*
-    
-    # ----- Step 2: Install first batch of packages
-    RUN apt-get update && \
-        apt-get -y install \
-          mariadb-client \
-          mariadb-common \
-          software-properties-common \
-          ca-certificates \
-          libpcre2-8-0 \
-          wget \
-          build-essential \
-          automake \
-          pkg-config \
-          autoconf \
-          autogen \
-          libmysqlclient-dev \
-          libxml2-dev \
-          libsnmp-dev \
-          libssh2-1-dev \
-          libopenipmi-dev \
-          libevent-dev \
-          libevent-pthreads-2.1-7t64 \
-          libcurl4-openssl-dev \
-          libpcre3-dev \
-          unixodbc-dev \
-          libldap2-dev \
-          libgnutls28-dev \
-          libmodbus-dev \
-          libmysqlclient-dev && \
-        apt-get clean && rm -rf /var/lib/apt/lists/*
-    
-    # ----- Step 3: Add Golang PPA & Install Go
-    RUN apt-get update && \
-        add-apt-repository ppa:longsleep/golang-backports && \
-        apt-get update && \
-        apt-get -y install golang-${GOLANG_VERSION} && \
-        apt-get clean && rm -rf /var/lib/apt/lists/*
-    
-    # ----- Step 4: Download & Extract Zabbix
-    RUN wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-        tar xvfz zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz && \
-        rm zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}.tar.gz
-    
-    # ----- Step 5: Configure & Compile Zabbix
-    WORKDIR /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION}
-    RUN ./configure \
+ARG ZABBIX_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GOLANG_VERSION=1.23
+
+# Extract major and minor versions dynamically
+ENV ZABBIX_MAJOR_VERSION=${ZABBIX_VERSION%.*} \
+    ZABBIX_MINOR_VERSION=${ZABBIX_VERSION##*.} \
+    PATH="${PATH}:/usr/lib/go-${GOLANG_VERSION}/bin"
+
+# Working directory
+WORKDIR /build
+
+# Install dependencies in a single step
+RUN apt-get update && apt-get dist-upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        mariadb-client mariadb-common \
+        software-properties-common ca-certificates wget \
+        build-essential automake pkg-config autoconf autogen \
+        libmysqlclient-dev libxml2-dev libsnmp-dev libssh2-1-dev \
+        libopenipmi-dev libevent-dev libcurl4-openssl-dev libpcre3-dev \
+        unixodbc-dev libldap2-dev libgnutls28-dev libmodbus-dev \
+        libevent-pthreads-2.1-7 && \
+    add-apt-repository ppa:longsleep/golang-backports && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends golang-${GOLANG_VERSION} && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Download and extract Zabbix source
+RUN wget https://cdn.zabbix.com/zabbix/sources/stable/${ZABBIX_MAJOR_VERSION}/zabbix-${ZABBIX_VERSION}.tar.gz && \
+    tar -xzf zabbix-${ZABBIX_VERSION}.tar.gz && \
+    rm zabbix-${ZABBIX_VERSION}.tar.gz
+
+# Configure, compile, and install Zabbix
+WORKDIR /build/zabbix-${ZABBIX_VERSION}
+RUN ./configure \
         --enable-server \
         --enable-agent \
         --with-mysql \
@@ -78,32 +56,31 @@
         --enable-agent2 \
         --with-openssl \
         --with-libmodbus \
-        --prefix=/var/lib/zabbix
-    RUN LDFLAGS="-lm" make -j"$(nproc)" && \
-        make install && \
-        go version
-    
-    
-    # --------------------------------
-    # Stage 2: Runtime Image
-    # --------------------------------
-    FROM ubuntu:noble
-    
-    ARG ZABBIX_MAJOR_VERSION=7.2
-    ARG ZABBIX_MINOR_VERSION=2
+        --prefix=/var/lib/zabbix && \
+    make -j"$(nproc)" && \
+    make install && \
+    go version
 
-    RUN apt-get update && \
-        apt-get -y install \
-          mariadb-client \
-          mariadb-common \
-          libmysqlclient* && \
-        apt-get clean && rm -rf /var/lib/apt/lists/*
-    
-    # Copy installed Zabbix from builder
-    COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
-    COPY --from=builder /build/zabbix-${ZABBIX_MAJOR_VERSION}.${ZABBIX_MINOR_VERSION} /var/lib/zabbix_tmp
-    
-    # Organize files in final image
-    RUN mv /var/lib/zabbix_tmp/ui /var/lib/zabbix_ui && \
-        mv /var/lib/zabbix_tmp/database /var/lib/zabbix_db && \
-        rm -rf /var/lib/zabbix_tmp
+# --------------------------------
+# Stage 2: Runtime Image
+# --------------------------------
+FROM ubuntu:noble
+
+ARG ZABBIX_VERSION
+ENV ZABBIX_MAJOR_VERSION=${ZABBIX_VERSION%.*} \
+    ZABBIX_MINOR_VERSION=${ZABBIX_VERSION##*.}
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        mariadb-client mariadb-common libmysqlclient* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy built Zabbix binaries from the builder stage
+COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
+COPY --from=builder /build/zabbix-${ZABBIX_VERSION} /var/lib/zabbix_tmp
+
+# Organize runtime files
+RUN mv /var/lib/zabbix_tmp/ui /var/lib/zabbix_ui && \
+    mv /var/lib/zabbix_tmp/database /var/lib/zabbix_db && \
+    rm -rf /var/lib/zabbix_tmp
