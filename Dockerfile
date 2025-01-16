@@ -4,8 +4,8 @@
     FROM ubuntu:noble AS builder
 
     ARG DEBIAN_FRONTEND=noninteractive
-    ARG ZABBIX_MAJOR_VERSION=7.0
-    ARG ZABBIX_MINOR_VERSION=3
+    ARG ZABBIX_MAJOR_VERSION=7.2
+    ARG ZABBIX_MINOR_VERSION=2
     ARG GOLANG_VERSION=1.23
     
     # Working directory
@@ -89,8 +89,15 @@
     # --------------------------------
     FROM ubuntu:noble
     
-    ARG ZABBIX_MAJOR_VERSION=7.0
-    ARG ZABBIX_MINOR_VERSION=3
+    ARG ZABBIX_MAJOR_VERSION=7.2
+    ARG ZABBIX_MINOR_VERSION=2
+
+    RUN apt-get update && \
+        apt-get -y install \
+          mariadb-client \
+          mariadb-common \
+          libmysqlclient-dev && \
+        apt-get clean && rm -rf /var/lib/apt/lists/*
     
     # Copy installed Zabbix from builder
     COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
