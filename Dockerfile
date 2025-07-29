@@ -8,7 +8,7 @@ FROM ubuntu:noble AS builder
 
 ARG ZABBIX_VERSION
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GOLANG_VERSION=1.23
+ARG GOLANG_VERSION=1.24
 
 # Extract major and minor versions dynamically
 ENV ZABBIX_MAJOR_VERSION=${ZABBIX_VERSION%.*} \
@@ -72,6 +72,7 @@ ENV ZABBIX_MAJOR_VERSION=${ZABBIX_VERSION%.*} \
 
 # Install runtime dependencies
 RUN apt-get update && \
+    apt-get dist-upgrade -y && \
     apt-get install -y --no-install-recommends \
         mariadb-client mariadb-common libmysqlclient* && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
