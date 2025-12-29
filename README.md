@@ -32,12 +32,69 @@ A multi-platform Docker image for Zabbix server and agent, built from source wit
 - Docker with buildx support
 - Docker Hub account with repository access
 
-### Setup Buildx Builder
+### Using the Build Script
+
+The `build_push_and_update_manifest.sh` script simplifies building and pushing images for different architectures and Zabbix versions.
+
+#### Basic Usage
+
+```bash
+# Build for a specific architecture with default Zabbix version (7.4.1)
+./build_push_and_update_manifest.sh --arch=arm64
+
+# Build for a specific architecture with custom Zabbix version
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=7.4.2
+
+# Build and also tag as :latest
+./build_push_and_update_manifest.sh --arch=arm64 --zabbix-version=7.5.0 --set-latest=true
+```
+
+#### Script Parameters
+
+- `--arch=<arch>` (required): Architecture to build for (`arm64` or `amd64`)
+- `--zabbix-version=<version>` (optional): Zabbix version to build (default: `7.4.1`)
+- `--set-latest=<true|false>` (optional): Also push to `:latest` tag (default: `false`)
+
+#### Examples
+
+```bash
+# Build ARM64 with default version (7.4.1)
+./build_push_and_update_manifest.sh --arch=arm64
+
+# Build AMD64 with Zabbix 7.4.2
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=7.4.2
+
+# Build ARM64 with version 7.5.0 and set as latest
+./build_push_and_update_manifest.sh --arch=arm64 --zabbix-version=7.5.0 --set-latest=true
+
+# Parameters can be in any order
+./build_push_and_update_manifest.sh --zabbix-version=7.4.3 --arch=amd64 --set-latest=false
+```
+
+#### Multi-Architecture Workflow
+
+To create a multi-architecture manifest, build both architectures separately:
+
+```bash
+# Build ARM64
+./build_push_and_update_manifest.sh --arch=arm64 --zabbix-version=7.4.1
+
+# Build AMD64
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=7.4.1
+
+# Create multi-arch manifest (optional, run after both builds)
+docker buildx imagetools create -t maborak/zabbix-base:7.4.1 \
+    maborak/zabbix-base:arm64 maborak/zabbix-base:amd64
+```
+
+### Manual Build (Alternative Method)
+
+#### Setup Buildx Builder
 ```bash
 docker buildx create --name mybuilder --use
 ```
 
-### Build and Push to Docker Hub
+#### Build and Push to Docker Hub
 ```bash
 docker buildx build \
   --sbom=true \
@@ -48,7 +105,7 @@ docker buildx build \
   --push
 ```
 
-### Build Parameters
+#### Build Parameters
 - `--sbom=true`: Generates Software Bill of Materials
 - `--provenance=true`: Includes build provenance for security
 - `--platform linux/amd64,linux/arm64`: Builds for both architectures
@@ -57,7 +114,19 @@ docker buildx build \
 
 ## Version Management
 
-To build a different Zabbix version, modify the `ZABBIX_VERSION` argument in the Dockerfile:
+### Using the Build Script
+
+The easiest way to build different Zabbix versions is using the build script:
+
+```bash
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=7.4.2
+```
+
+### Manual Method
+
+To build a different Zabbix version manually, you can either:
+1. Pass it as a build argument: `--build-arg ZABBIX_VERSION=7.4.2`
+2. Modify the `ZABBIX_VERSION` argument in the Dockerfile:
 
 ```dockerfile
 ARG ZABBIX_VERSION=7.4.1
