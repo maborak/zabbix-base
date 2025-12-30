@@ -24,7 +24,7 @@ RUN apt-get update && apt-get dist-upgrade -y && \
     apt-get install -y --no-install-recommends \
         mariadb-client mariadb-common \
         software-properties-common ca-certificates wget \
-        build-essential automake pkg-config autoconf autogen \
+        build-essential gpg gpg-agent gcc g++ automake pkg-config autoconf autogen \
         libmysqlclient-dev libxml2-dev libsnmp-dev libssh2-1-dev \
         libopenipmi-dev libevent-dev libcurl4-openssl-dev \
         unixodbc-dev libldap2-dev libgnutls28-dev libmodbus-dev \
@@ -62,10 +62,10 @@ RUN ./configure \
         --enable-agent2 \
         --with-openssl \
         --with-libmodbus \
-        --prefix=/var/lib/zabbix && \
-    make -j"$(nproc)" && \
-    make install && \
-    go version
+        --prefix=/var/lib/zabbix
+RUN make -j"$(nproc)"
+RUN make install
+RUN go version
 
 # --------------------------------
 # Stage 2: Runtime Image
