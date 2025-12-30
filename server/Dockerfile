@@ -1,8 +1,18 @@
 ARG ZABBIX_BASE
 ARG UBUNTU_VERSION=25.04
+ARG BUILD_DATE
 FROM ${ZABBIX_BASE:-maborak/zabbix-base} AS base
 
 FROM ubuntu:${UBUNTU_VERSION}
+ARG UBUNTU_VERSION
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="Zabbix Server" \
+      org.opencontainers.image.description="Zabbix server component" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/zabbix/zabbix" \
+      maintainer="maborak"
+
 WORKDIR /var/lib/zabbix/
 COPY --from=base /var/lib/zabbix/ ./
 ARG DEBIAN_FRONTEND=noninteractive

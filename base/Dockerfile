@@ -1,6 +1,7 @@
 # Define Zabbix version globally
 ARG ZABBIX_VERSION=7.4.1
 ARG UBUNTU_VERSION=25.04
+ARG BUILD_DATE
 
 # --------------------------------
 # Stage 1: Build Zabbix
@@ -8,6 +9,7 @@ ARG UBUNTU_VERSION=25.04
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG ZABBIX_VERSION
+ARG BUILD_DATE
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GOLANG_VERSION=1.24
 
@@ -73,6 +75,16 @@ RUN go version
 FROM ubuntu:${UBUNTU_VERSION}
 
 ARG ZABBIX_VERSION
+ARG UBUNTU_VERSION
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="Zabbix Base" \
+      org.opencontainers.image.description="Zabbix server and agent base image" \
+      org.opencontainers.image.version="${ZABBIX_VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/zabbix/zabbix" \
+      maintainer="maborak"
+
 ENV ZABBIX_MAJOR_VERSION=${ZABBIX_VERSION%.*} \
     ZABBIX_MINOR_VERSION=${ZABBIX_VERSION##*.}
 

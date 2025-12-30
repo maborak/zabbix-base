@@ -3,6 +3,7 @@ set -e
 
 # Default values
 ZABBIX_VERSION="7.4.1"
+UBUNTU_VERSION="25.04"
 ARCH=""
 SET_LATEST="false"
 VERBOSE="false"
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --zabbix-version=*)
             ZABBIX_VERSION="${1#--zabbix-version=}"
+            shift
+            ;;
+        --ubuntu-version=*)
+            UBUNTU_VERSION="${1#--ubuntu-version=}"
             shift
             ;;
         --set-latest)
@@ -125,9 +130,10 @@ fi
 
 # Validate architecture(s)
 if [[ -z "$ARCH" ]]; then
-    echo "Usage: $0 --arch=<arch> [--zabbix-version=<version>] [--set-latest] [--verbose] [--versions] [--no-cache] [--dry-run] [--force] [--push=<true|false>]"
+    echo "Usage: $0 --arch=<arch> [--zabbix-version=<version>] [--ubuntu-version=<version>] [--set-latest] [--verbose] [--versions] [--no-cache] [--dry-run] [--force] [--push=<true|false>]"
     echo "  --arch: arm64, amd64, or comma-separated list (e.g., arm64,amd64) (required)"
-    echo "  --zabbix-version: Zabbix version (optional, default: 7.4.1)"
+    echo "  --zabbix-version: Zabbix version (optional, default: 7.4.1, use 'git' to build from source)"
+    echo "  --ubuntu-version: Ubuntu version (optional, default: 25.04)"
     echo "  --set-latest: Push to :latest tag (optional flag, default: false)"
     echo "  --verbose: Show full build output (optional, default: false)"
     echo "  --versions: List available Zabbix versions from GitHub (exits after listing)"
@@ -425,22 +431,35 @@ if [[ "$PUSH" == "true" ]]; then
     PUSH_FLAG="--push"
 fi
 
+# Generate build date timestamp
+BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+# Determine which Dockerfile to use and build args
+if [[ "$ZABBIX_VERSION" == "git" ]]; then
+    DOCKERFILE="base/Dockerfile.git"
+    BUILD_ARGS="--build-arg UBUNTU_VERSION=${UBUNTU_VERSION} --build-arg BUILD_DATE=${BUILD_DATE}"
+    echo "Using git-based Dockerfile (building from source repository)"
+else
+    DOCKERFILE="base/Dockerfile"
+    BUILD_ARGS="--build-arg ZABBIX_VERSION=${ZABBIX_VERSION} --build-arg UBUNTU_VERSION=${UBUNTU_VERSION} --build-arg BUILD_DATE=${BUILD_DATE}"
+fi
+
 # Build base image
 if [[ "$PUSH" == "true" ]]; then
     echo "Starting base image build and push..."
 else
     echo "Starting base image build (no push)..."
 fi
-echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_VERSION=${ZABBIX_VERSION} ${BASE_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f base/Dockerfile base/"
+echo "Command: docker buildx build --platform ${PLATFORMS} ${BUILD_ARGS} ${BASE_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${DOCKERFILE} base/"
 echo ""
 
 docker buildx build --platform ${PLATFORMS} \
-    --build-arg ZABBIX_VERSION=${ZABBIX_VERSION} \
+    ${BUILD_ARGS} \
     ${BASE_TAGS} \
     ${PUSH_FLAG} \
     ${NO_CACHE_FLAG} \
     ${PROGRESS_FLAG} \
-    -f base/Dockerfile \
+    -f ${DOCKERFILE} \
     base/
 
 echo ""
@@ -484,11 +503,12 @@ for component in "${COMPONENTS[@]}"; do
     else
         echo "Starting ${component} image build (no push)..."
     fi
-    echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} ${COMPONENT_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${component}/Dockerfile ${component}/"
+    echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} --build-arg BUILD_DATE=${BUILD_DATE} ${COMPONENT_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${component}/Dockerfile ${component}/"
     echo ""
     
     docker buildx build --platform ${PLATFORMS} \
         --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} \
+        --build-arg BUILD_DATE=${BUILD_DATE} \
         ${COMPONENT_TAGS} \
         ${PUSH_FLAG} \
         ${NO_CACHE_FLAG} \
