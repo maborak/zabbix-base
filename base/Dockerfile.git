@@ -1,0 +1,115 @@
+# To build:
+# docker build --build-arg UBUNTU_VERSION=25.04 --build-arg GOLANG_VERSION=1.23 -t maborak/zabbix-base:git . --progress=plain
+
+# Define Ubuntu version globally
+ARG UBUNTU_VERSION=25.04
+ARG BUILD_DATE
+
+# Stage 1: Compile and build Zabbix
+FROM ubuntu:${UBUNTU_VERSION} AS builder 
+
+# Set environment variables
+ARG DEBIAN_FRONTEND=noninteractive 
+ARG UBUNTU_VERSION
+ARG BUILD_DATE
+ARG GOLANG_VERSION=1.23
+
+# Set working directory 
+WORKDIR /build 
+ENV PATH="${PATH}:/usr/lib/go-${GOLANG_VERSION}/bin"
+
+# Install minimal git and ca-certificates to clone repository early
+# This allows the large git clone to be cached separately
+RUN apt-get update && \
+    apt-get -y install --no-install-recommends git ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Clone Zabbix repository (large operation, cached separately)
+RUN git clone --verbose https://github.com/zabbix/zabbix.git
+
+# Install all build dependencies
+RUN apt-get update && \
+    apt-get -y install mariadb-client \
+    mariadb-common \
+    software-properties-common \
+    libpcre2-8-0 \
+    libpcre2-dev \
+    wget \
+    build-essential \
+    automake \
+    pkg-config \
+    autoconf \
+    autogen \
+    libmysqlclient-dev \
+    libxml2-dev \
+    libsnmp-dev \
+    libssh2-1-dev \
+    libopenipmi-dev \
+    libevent-dev \
+    libevent-pthreads-2.1-7t64 \
+    libcurl4-openssl-dev \
+    libpcre3-dev \
+    unixodbc-dev \
+    #openjdk-21-jdk \
+    libldap2-dev \
+    libgnutls28-dev \
+    libmodbus-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Golang
+RUN add-apt-repository ppa:longsleep/golang-backports && \
+    apt-get update && \
+    apt-get -y install golang-${GOLANG_VERSION} && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Build Zabbix
+WORKDIR /build/zabbix
+RUN sh bootstrap.sh && \
+    ./configure \
+    --enable-server \
+    --enable-agent \
+    --with-mysql \
+    --enable-ipv6 \
+    --with-net-snmp \
+    --with-libcurl \
+    --with-libxml2 \
+    --with-openipmi \
+    --with-ssh2 \
+    --with-unixodbc \
+    --enable-proxy \
+    #--enable-java \
+    --enable-webservice \
+    #--with-ldap \
+    --enable-agent2 \
+    --with-openssl \
+    --with-libmodbus \
+    --prefix=/var/lib/zabbix && \
+    make -j$(nproc) && \
+    make install && \
+    make dbschema
+
+# Move UI and database files, then clean up
+WORKDIR /build
+RUN mv /build/zabbix/ui /var/lib/zabbix_ui && \
+    mv /build/zabbix/database /var/lib/zabbix_database && \
+    rm -Rf /build/zabbix
+
+# Stage 2: Runtime Image
+ARG UBUNTU_VERSION=25.04
+ARG BUILD_DATE
+FROM ubuntu:${UBUNTU_VERSION}
+
+ARG UBUNTU_VERSION
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="Zabbix Base (Git)" \
+      org.opencontainers.image.description="Zabbix server and agent base image built from git source" \
+      org.opencontainers.image.version="git" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/zabbix/zabbix" \
+      maintainer="maborak"
+
+COPY --from=builder /var/lib/zabbix/sbin/ /var/lib/zabbix/sbin/
+COPY --from=builder /var/lib/zabbix_ui /var/lib/zabbix_ui
+COPY --from=builder /var/lib/zabbix_database /var/lib/zabbix_db
+
