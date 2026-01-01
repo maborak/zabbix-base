@@ -52,7 +52,8 @@ The script builds and tags the following images:
 - `--arch=<arch>` (required): Architecture(s) to build for. Can be:
   - Single: `arm64` or `amd64`
   - Multiple: `arm64,amd64` (comma-separated)
-- `--zabbix-version=<version>` (optional): Zabbix version to build (default: `7.4.1`)
+- `--zabbix-version=<version>` (optional): Zabbix version to build (default: `7.4.1`). Use `git` to build from source repository
+- `--ubuntu-version=<version>` (optional): Ubuntu base image version (default: `25.04`)
 - `--set-latest` (optional): Also tag and push as `:latest` (default: `false`)
 - `--verbose` (optional): Show full build output with `--progress=plain` (default: `false`)
 - `--versions` (optional): List available Zabbix versions from GitHub and exit
@@ -75,6 +76,12 @@ The script builds and tags the following images:
 
 # Build and also tag as :latest
 ./build_push_and_update_manifest.sh --arch=arm64 --zabbix-version=7.5.0 --set-latest
+
+# Build from git source (latest development version)
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=git
+
+# Build with custom Ubuntu version
+./build_push_and_update_manifest.sh --arch=amd64 --zabbix-version=7.4.2 --ubuntu-version=24.04
 
 # Build entire stack locally without pushing
 ./build_push_and_update_manifest.sh --arch=amd64 --push=false
@@ -243,9 +250,12 @@ docker buildx build \
 ```
 
 The build process automatically:
-- Downloads the correct Zabbix source version
+- Downloads the correct Zabbix source version (or clones from git if `--zabbix-version=git`)
 - Installs the appropriate PCRE library (PCRE2 for 7.4.x, PCRE3 for 7.2.x)
 - Builds with all necessary dependencies
+- Uses the specified Ubuntu version as the base image
+
+**Note**: When using `--zabbix-version=git`, the script uses `base/Dockerfile.git` to build from the latest source in the Zabbix GitHub repository. This is useful for testing development versions or building custom Zabbix builds.
 
 ## Security Features
 

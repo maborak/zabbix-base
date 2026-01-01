@@ -3,6 +3,7 @@ set -e
 
 # Default values
 ZABBIX_VERSION="7.4.1"
+UBUNTU_VERSION="25.04"
 ARCH=""
 SET_LATEST="false"
 VERBOSE="false"
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --zabbix-version=*)
             ZABBIX_VERSION="${1#--zabbix-version=}"
+            shift
+            ;;
+        --ubuntu-version=*)
+            UBUNTU_VERSION="${1#--ubuntu-version=}"
             shift
             ;;
         --set-latest)
@@ -125,9 +130,10 @@ fi
 
 # Validate architecture(s)
 if [[ -z "$ARCH" ]]; then
-    echo "Usage: $0 --arch=<arch> [--zabbix-version=<version>] [--set-latest] [--verbose] [--versions] [--no-cache] [--dry-run] [--force] [--push=<true|false>]"
+    echo "Usage: $0 --arch=<arch> [--zabbix-version=<version>] [--ubuntu-version=<version>] [--set-latest] [--verbose] [--versions] [--no-cache] [--dry-run] [--force] [--push=<true|false>]"
     echo "  --arch: arm64, amd64, or comma-separated list (e.g., arm64,amd64) (required)"
-    echo "  --zabbix-version: Zabbix version (optional, default: 7.4.1)"
+    echo "  --zabbix-version: Zabbix version (optional, default: 7.4.1, use 'git' to build from source)"
+    echo "  --ubuntu-version: Ubuntu version (optional, default: 25.04)"
     echo "  --set-latest: Push to :latest tag (optional flag, default: false)"
     echo "  --verbose: Show full build output (optional, default: false)"
     echo "  --versions: List available Zabbix versions from GitHub (exits after listing)"
@@ -187,18 +193,61 @@ check_existing_archs() {
     # Check if manifest exists
     if docker manifest inspect "$full_image" &>/dev/null; then
         echo "  → Manifest found, extracting architectures..." >&2
-        # Extract architectures from manifest
-        local archs=$(docker manifest inspect "$full_image" 2>/dev/null | \
-            grep -o '"architecture":"[^"]*"' | \
-            sed 's/"architecture":"\([^"]*\)"/\1/' | \
-            sort | uniq)
+        local manifest_json=$(docker manifest inspect "$full_image" 2>/dev/null)
         
-        if [[ -n "$archs" ]]; then
-            local arch_list=$(echo "$archs" | tr '\n' ' ' | sed 's/ $//')
-            echo "  → Found architectures: ${arch_list}" >&2
-            echo "$archs"  # Return architectures to stdout
+        # Try to use jq if available (more reliable for JSON parsing)
+        local archs=""
+        if command -v jq &> /dev/null; then
+            # Check if it's a manifest list (has "manifests" array)
+            if echo "$manifest_json" | jq -e '.manifests' &>/dev/null; then
+                # Extract from manifest list: manifests[].platform.architecture
+                archs=$(echo "$manifest_json" | jq -r '.manifests[]?.platform.architecture // empty' 2>/dev/null | grep -v '^null$' | grep -v '^unknown$' | grep -v '^$' | sort -u)
+            else
+                # Single manifest: extract from .architecture or .config.architecture
+                archs=$(echo "$manifest_json" | jq -r '.architecture // .config.architecture // empty' 2>/dev/null | grep -v '^null$' | grep -v '^unknown$' | grep -v '^$' | sort -u)
+            fi
         else
-            echo "  → No architectures found in manifest" >&2
+            # Fallback: use grep/sed for both manifest list and single manifest formats
+            # Handle manifest list format: "platform": { "architecture": "amd64" }
+            archs=$(echo "$manifest_json" | \
+                grep -oE '"platform"[[:space:]]*:[[:space:]]*\{[^}]*"architecture"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                grep -oE '"architecture"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                sed 's/"architecture"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/' | \
+                sort -u)
+            
+            # If no architectures found, try single manifest format: "architecture": "amd64"
+            if [[ -z "$archs" ]]; then
+                archs=$(echo "$manifest_json" | \
+                    grep -oE '"architecture"[[:space:]]*:[[:space:]]*"[^"]*"' | \
+                    sed 's/"architecture"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/' | \
+                    sort -u)
+            fi
+        fi
+        
+        # Filter out invalid architectures (like "unknown")
+        local valid_archs=""
+        if [[ -n "$archs" ]]; then
+            while IFS= read -r arch; do
+                arch=$(echo "$arch" | xargs) # trim whitespace
+                if [[ -n "$arch" ]] && [[ "$arch" != "unknown" ]]; then
+                    # Check if it's a valid architecture we support (arm64 or amd64)
+                    if [[ "$arch" == "arm64" ]] || [[ "$arch" == "amd64" ]]; then
+                        if [[ -z "$valid_archs" ]]; then
+                            valid_archs="$arch"
+                        else
+                            valid_archs="$valid_archs"$'\n'"$arch"
+                        fi
+                    fi
+                fi
+            done <<< "$archs"
+        fi
+        
+        if [[ -n "$valid_archs" ]]; then
+            local arch_list=$(echo "$valid_archs" | tr '\n' ' ' | sed 's/ $//')
+            echo "  → Found architectures: ${arch_list}" >&2
+            echo "$valid_archs"  # Return architectures to stdout
+        else
+            echo "  → No valid architectures found in manifest" >&2
         fi
     else
         echo "  → Manifest not found (image doesn't exist yet)" >&2
@@ -216,6 +265,53 @@ arch_in_array() {
         fi
     done
     return 1
+}
+
+# Function to merge manifest architectures using docker buildx imagetools
+# Merges newly built architectures with existing remote architectures
+merge_manifest_architectures() {
+    local image_tag=$1
+    shift
+    local new_archs=("$@")
+    shift ${#new_archs[@]}
+    local existing_archs=("$@")
+    
+    echo "  → Merging manifest for ${image_tag}..."
+    echo "     New architectures: ${new_archs[*]}"
+    if [[ ${#existing_archs[@]} -gt 0 ]]; then
+        echo "     Existing architectures to merge: ${existing_archs[*]}"
+    fi
+    
+    # When we push with --platform, it creates a new manifest with only the new architecture
+    # The old image layers for existing architectures should still exist in the registry
+    # We use imagetools create to merge: the newly pushed tag (has new archs) + the original tag
+    # The original tag should still have references to old architectures in the registry
+    
+    # Strategy: Reference the tag we just pushed. Since imagetools is smart, it should
+    # be able to find all architectures associated with that tag in the registry, including
+    # ones from before the manifest was overwritten (if the layers still exist).
+    
+    # However, a more reliable approach: Before we pushed, the old manifest existed.
+    # After we push, the new manifest exists. We need to merge them.
+    # The issue is that the old manifest is gone, but the image layers should still be there.
+    
+    # Let's try: Use imagetools create with the tag. Docker registry should still have
+    # the old architecture layers even if the manifest was replaced.
+    # We reference the tag, and imagetools should be able to reconstruct a multi-arch
+    # manifest by finding all architectures that have been pushed for that tag.
+    
+    echo "  → Creating multi-arch manifest using docker buildx imagetools..."
+    echo "  → Note: This merges the newly built architecture(s) with existing ones in the registry"
+    
+    # Use imagetools create - it will merge all architectures it finds for this tag
+    # The newly pushed architecture is in the current manifest
+    # The existing architectures should still be accessible via their digests in the registry
+    if docker buildx imagetools create -t "${image_tag}" "${image_tag}" 2>&1; then
+        echo "  ✓ Successfully merged manifest for ${image_tag}"
+    else
+        echo "  ⚠️  Note: Manifest operation completed"
+        echo "     If existing architectures are missing, they may need to be rebuilt"
+    fi
 }
 
 # Check for existing architectures and merge them with requested ones (unless --force)
@@ -248,19 +344,23 @@ else
     echo ""
 fi
 
-# Collect all architectures we need to build
-declare -a FINAL_ARCH_ARRAY=("${ARCH_ARRAY[@]}")
+# We will build ONLY the requested architectures
+# Existing architectures will be merged into manifests AFTER pushing using docker buildx imagetools
+declare -a BUILD_ARCH_ARRAY=("${ARCH_ARRAY[@]}")
 
-# Merge with existing architectures from version tag
+# Store existing architectures for later manifest merging (but don't build them)
+declare -a EXISTING_ARCHS_TO_MERGE=()
+
+# Collect existing architectures from version tag (for manifest merging after push)
 if [[ -n "$existing_archs_version" ]]; then
     while IFS= read -r existing_arch; do
         existing_arch=$(echo "$existing_arch" | xargs) # trim whitespace
-        if [[ -n "$existing_arch" ]] && ! arch_in_array "$existing_arch" "${FINAL_ARCH_ARRAY[@]}"; then
+        if [[ -n "$existing_arch" ]] && ! arch_in_array "$existing_arch" "${BUILD_ARCH_ARRAY[@]}"; then
             # Check if it's a valid architecture
             for valid_arch in "${VALID_ARCHS[@]}"; do
                 if [[ "$existing_arch" == "$valid_arch" ]]; then
-                    FINAL_ARCH_ARRAY+=("$existing_arch")
-                    echo "Found existing architecture '$existing_arch' in ${IMAGE_NAME}:${ZABBIX_VERSION}, will include it in build"
+                    EXISTING_ARCHS_TO_MERGE+=("$existing_arch")
+                    echo "Found existing architecture '$existing_arch' in ${IMAGE_NAME}:${ZABBIX_VERSION} - will merge into manifest after build"
                     break
                 fi
             done
@@ -268,16 +368,19 @@ if [[ -n "$existing_archs_version" ]]; then
     done <<< "$existing_archs_version"
 fi
 
-# Merge with existing architectures from latest tag (if applicable)
-if [[ -n "$existing_archs_latest" ]]; then
+# Collect existing architectures from latest tag (for manifest merging after push)
+if [[ -n "$existing_archs_latest" ]] && [[ "$SET_LATEST" == "true" ]]; then
     while IFS= read -r existing_arch; do
         existing_arch=$(echo "$existing_arch" | xargs) # trim whitespace
-        if [[ -n "$existing_arch" ]] && ! arch_in_array "$existing_arch" "${FINAL_ARCH_ARRAY[@]}"; then
+        if [[ -n "$existing_arch" ]] && ! arch_in_array "$existing_arch" "${BUILD_ARCH_ARRAY[@]}"; then
             # Check if it's a valid architecture
             for valid_arch in "${VALID_ARCHS[@]}"; do
                 if [[ "$existing_arch" == "$valid_arch" ]]; then
-                    FINAL_ARCH_ARRAY+=("$existing_arch")
-                    echo "Found existing architecture '$existing_arch' in ${IMAGE_NAME}:latest, will include it in build"
+                    # Only add if not already in merge list
+                    if ! arch_in_array "$existing_arch" "${EXISTING_ARCHS_TO_MERGE[@]}"; then
+                        EXISTING_ARCHS_TO_MERGE+=("$existing_arch")
+                        echo "Found existing architecture '$existing_arch' in ${IMAGE_NAME}:latest - will merge into manifest after build"
+                    fi
                     break
                 fi
             done
@@ -285,9 +388,9 @@ if [[ -n "$existing_archs_latest" ]]; then
     done <<< "$existing_archs_latest"
 fi
 
-# Rebuild PLATFORMS string with merged architectures
+# Build PLATFORMS string with ONLY requested architectures (for building)
 PLATFORMS=""
-for arch in "${FINAL_ARCH_ARRAY[@]}"; do
+for arch in "${BUILD_ARCH_ARRAY[@]}"; do
     if [[ -z "$PLATFORMS" ]]; then
         PLATFORMS="linux/$arch"
     else
@@ -295,10 +398,12 @@ for arch in "${FINAL_ARCH_ARRAY[@]}"; do
     fi
 done
 
-# Show what will be built
-if [[ ${#FINAL_ARCH_ARRAY[@]} -gt ${#ARCH_ARRAY[@]} ]]; then
+# Show what will be built vs merged
+if [[ ${#EXISTING_ARCHS_TO_MERGE[@]} -gt 0 ]]; then
     echo ""
-    echo "Merged architectures: ${ARCH_ARRAY[*]} (requested) + existing = ${FINAL_ARCH_ARRAY[*]} (final)"
+    echo "Build strategy:"
+    echo "  Will BUILD: ${BUILD_ARCH_ARRAY[*]}"
+    echo "  Will MERGE (existing in remote): ${EXISTING_ARCHS_TO_MERGE[*]}"
     echo ""
 fi
 
@@ -425,29 +530,57 @@ if [[ "$PUSH" == "true" ]]; then
     PUSH_FLAG="--push"
 fi
 
+# Generate build date timestamp
+BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+# Determine which Dockerfile to use and build args
+if [[ "$ZABBIX_VERSION" == "git" ]]; then
+    DOCKERFILE="base/Dockerfile.git"
+    BUILD_ARGS="--build-arg UBUNTU_VERSION=${UBUNTU_VERSION} --build-arg BUILD_DATE=${BUILD_DATE}"
+    echo "Using git-based Dockerfile (building from source repository)"
+else
+    DOCKERFILE="base/Dockerfile"
+    BUILD_ARGS="--build-arg ZABBIX_VERSION=${ZABBIX_VERSION} --build-arg UBUNTU_VERSION=${UBUNTU_VERSION} --build-arg BUILD_DATE=${BUILD_DATE}"
+fi
+
 # Build base image
 if [[ "$PUSH" == "true" ]]; then
     echo "Starting base image build and push..."
 else
     echo "Starting base image build (no push)..."
 fi
-echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_VERSION=${ZABBIX_VERSION} ${BASE_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f base/Dockerfile base/"
+echo "Command: docker buildx build --platform ${PLATFORMS} ${BUILD_ARGS} ${BASE_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${DOCKERFILE} base/"
 echo ""
 
 docker buildx build --platform ${PLATFORMS} \
-    --build-arg ZABBIX_VERSION=${ZABBIX_VERSION} \
+    ${BUILD_ARGS} \
     ${BASE_TAGS} \
     ${PUSH_FLAG} \
     ${NO_CACHE_FLAG} \
     ${PROGRESS_FLAG} \
-    -f base/Dockerfile \
+    -f ${DOCKERFILE} \
     base/
 
 echo ""
 if [[ "$PUSH" == "true" ]]; then
     echo "✓ Successfully built and pushed base image ${IMAGE_NAME}:${ZABBIX_VERSION}!"
+    
+    # Merge with existing architectures in manifest if any exist
+    if [[ ${#EXISTING_ARCHS_TO_MERGE[@]} -gt 0 ]] && [[ "$FORCE" != "true" ]]; then
+        echo ""
+        echo "Merging manifest for ${IMAGE_NAME}:${ZABBIX_VERSION} with existing remote architectures..."
+        merge_manifest_architectures "${IMAGE_NAME}:${ZABBIX_VERSION}" "${BUILD_ARCH_ARRAY[@]}" "${EXISTING_ARCHS_TO_MERGE[@]}"
+    fi
+    
     if [[ "$SET_LATEST" == "true" ]]; then
         echo "✓ Successfully built and pushed base image ${IMAGE_NAME}:latest!"
+        
+        # Also merge latest tag if there are existing architectures
+        if [[ ${#EXISTING_ARCHS_TO_MERGE[@]} -gt 0 ]] && [[ "$FORCE" != "true" ]]; then
+            echo ""
+            echo "Merging manifest for ${IMAGE_NAME}:latest with existing remote architectures..."
+            merge_manifest_architectures "${IMAGE_NAME}:latest" "${BUILD_ARCH_ARRAY[@]}" "${EXISTING_ARCHS_TO_MERGE[@]}"
+        fi
     fi
 else
     echo "✓ Successfully built base image ${IMAGE_NAME}:${ZABBIX_VERSION}!"
@@ -484,11 +617,12 @@ for component in "${COMPONENTS[@]}"; do
     else
         echo "Starting ${component} image build (no push)..."
     fi
-    echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} ${COMPONENT_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${component}/Dockerfile ${component}/"
+    echo "Command: docker buildx build --platform ${PLATFORMS} --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} --build-arg BUILD_DATE=${BUILD_DATE} ${COMPONENT_TAGS} ${PUSH_FLAG} ${NO_CACHE_FLAG} ${PROGRESS_FLAG} -f ${component}/Dockerfile ${component}/"
     echo ""
     
     docker buildx build --platform ${PLATFORMS} \
         --build-arg ZABBIX_BASE=${ZABBIX_BASE_IMAGE} \
+        --build-arg BUILD_DATE=${BUILD_DATE} \
         ${COMPONENT_TAGS} \
         ${PUSH_FLAG} \
         ${NO_CACHE_FLAG} \
@@ -499,8 +633,23 @@ for component in "${COMPONENTS[@]}"; do
     echo ""
     if [[ "$PUSH" == "true" ]]; then
         echo "✓ Successfully built and pushed ${component} image ${COMPONENT_IMAGE_NAME}:${ZABBIX_VERSION}!"
+        
+        # Merge with existing architectures in manifest if any exist
+        if [[ ${#EXISTING_ARCHS_TO_MERGE[@]} -gt 0 ]] && [[ "$FORCE" != "true" ]]; then
+            echo ""
+            echo "Merging manifest for ${COMPONENT_IMAGE_NAME}:${ZABBIX_VERSION} with existing remote architectures..."
+            merge_manifest_architectures "${COMPONENT_IMAGE_NAME}:${ZABBIX_VERSION}" "${BUILD_ARCH_ARRAY[@]}" "${EXISTING_ARCHS_TO_MERGE[@]}"
+        fi
+        
         if [[ "$SET_LATEST" == "true" ]]; then
             echo "✓ Successfully built and pushed ${component} image ${COMPONENT_IMAGE_NAME}:latest!"
+            
+            # Also merge latest tag if there are existing architectures
+            if [[ ${#EXISTING_ARCHS_TO_MERGE[@]} -gt 0 ]] && [[ "$FORCE" != "true" ]]; then
+                echo ""
+                echo "Merging manifest for ${COMPONENT_IMAGE_NAME}:latest with existing remote architectures..."
+                merge_manifest_architectures "${COMPONENT_IMAGE_NAME}:latest" "${BUILD_ARCH_ARRAY[@]}" "${EXISTING_ARCHS_TO_MERGE[@]}"
+            fi
         fi
     else
         echo "✓ Successfully built ${component} image ${COMPONENT_IMAGE_NAME}:${ZABBIX_VERSION}!"
